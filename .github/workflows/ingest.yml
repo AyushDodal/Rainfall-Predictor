@@ -1,0 +1,22 @@
+name: Ingest (scheduled)
+on:
+  schedule:
+    - cron: "*/5 * * * *"   # every 5 minutes
+  workflow_dispatch:        # allows manual run
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      - name: Install deps
+        run: pip install -r backend/requirements.txt
+      - name: Run ingest
+        env:
+          MONGO_URI: ${{ secrets.MONGO_URI }}
+          OWM_API_KEY: ${{ secrets.OWM_API_KEY }}
+        run: python backend/ingest.py
