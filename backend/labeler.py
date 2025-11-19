@@ -4,10 +4,10 @@ from datetime import timedelta
 from pymongo import MongoClient, UpdateOne
 from datetime import datetime, timezone
 
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
-DB_NAME = os.getenv("DB_NAME", "weather")
-FEATURES_COL = os.getenv("FEATURES_COL", "features")
-RAW_COL = os.getenv("RAW_COL", "raw_observations")
+MONGO_URI = os.environ["MONGO_URI"]
+DB_NAME = "weather"
+FEATURES_COL = "features"
+RAW_COL = "raw_observations"
 PRED_COL = os.getenv("PRED_COL", "predictions")
 
 # how far back to search (days) for unlabeled features
