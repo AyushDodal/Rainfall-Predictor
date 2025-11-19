@@ -15,4 +15,5 @@ jobs:
       - name: Run labeler once
         env:
           MONGO_URI: ${{ secrets.MONGO_URI }}
-        run: python backend/labeler.py
+        run: python backend/labeler.py --once
+
