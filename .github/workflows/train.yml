@@ -1,0 +1,18 @@
+name: Train model (scheduled)
+on:
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with: { python-version: '3.11' }
+      - run: pip install -r backend/requirements.txt
+      - name: Run training
+        env:
+          MONGO_URI: ${{ secrets.MONGO_URI }}
+        run: python backend/train.py --activate True
