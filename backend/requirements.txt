@@ -1,1 +1,13 @@
+fastapi
+uvicorn[standard]
+gunicorn
+pymongo
+dnspython
+python-dotenv
+pydantic
+requests
+pandas
+numpy
+scikit-learn
+xgboost
 
