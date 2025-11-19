@@ -1,11 +1,16 @@
-# feature_worker.py (concise)
+# feature_worker.py
+import os
 from pymongo import MongoClient, UpdateOne
 import pandas as pd
 from datetime import timedelta, timezone, datetime
-import os
+import traceback
 
-MONGO_URI = os.environ["MONGO_URI"]
-DB = "weather"
+# Read MONGO_URI from env
+MONGO_URI = os.environ.get("MONGO_URI")
+if not MONGO_URI:
+    raise RuntimeError("MONGO_URI not set in env")
+
+DB = os.environ.get("DB_NAME", "weather")
 RAW_COL = "raw_observations"
 FEATURES_COL = "features"
 
@@ -18,55 +23,72 @@ features_col = db[FEATURES_COL]
 WINDOWS = [10, 30, 60]
 
 def compute_features_from_df(df):
-    """
-    df: cleaned DataFrame with columns:
-      ['location_id','timestamp','temp_c','pressure_hpa','humidity_pct','wind_m_s','rain_1h_mm']
-    returns: DataFrame with feature columns + location_id + timestamp
-    """
     def fe_group(g):
         g = g.sort_values("timestamp").reset_index(drop=True)
-        # lags
+        # basic lags
         g["temp_lag_1"] = g["temp_c"].shift(1)
         g["pressure_lag_1"] = g["pressure_hpa"].shift(1)
         g["humidity_lag_1"] = g["humidity_pct"].shift(1)
 
         # rolling means + std + pressure drop
         for w in WINDOWS:
-            n = int(w)  # expects data at 1-min freq; if not, windows are count-based
+            n = int(w)
             g[f"temp_roll_{w}"] = g["temp_c"].rolling(window=n, min_periods=1).mean()
             g[f"humidity_roll_{w}"] = g["humidity_pct"].rolling(window=n, min_periods=1).mean()
             g[f"wind_roll_{w}"] = g["wind_m_s"].rolling(window=n, min_periods=1).mean()
-            # pressure change over window (current - mean of previous window)
             g[f"pressure_drop_{w}"] = g["pressure_hpa"] - g["pressure_hpa"].rolling(window=n, min_periods=1).mean().shift(0)
 
-        # deltas over short window
         g["temp_delta_3"] = g["temp_c"] - g["temp_c"].shift(3)
         g["pressure_delta_3"] = g["pressure_hpa"] - g["pressure_hpa"].shift(3)
 
-        # time features
         g["hour"] = g["timestamp"].dt.hour
         g["minute"] = g["timestamp"].dt.minute
         g["dayofweek"] = g["timestamp"].dt.dayofweek
 
-        # keep only latest row per timestamp (features timestamp = current row timestamp)
         return g
 
     out = df.groupby("location_id", group_keys=False).apply(fe_group).reset_index(drop=True)
     return out
 
 def load_recent_clean(days=7, limit=None):
-    """
-    Load cleaned data using your existing get_clean_df helper.
-    """
-    # assume get_clean_df is defined/imported
-    from mongo_to_df import get_clean_df
-    return get_clean_df(days=days, limit=limit)
+    # try to import existing helper
+    try:
+        from mongo_to_df import get_clean_df
+        return get_clean_df(days=days, limit=limit)
+    except Exception:
+        # fallback: read raw_observations and construct a minimal clean df
+        print("Warning: get_clean_df not available, building minimal clean DataFrame from raw_observations")
+        q = {}
+        if days:
+            cutoff = pd.Timestamp.utcnow(tz="UTC") - pd.Timedelta(days=days)
+            q["timestamp"] = {"$gte": cutoff.to_pydatetime()}
+        docs = list(raw.find(q).sort("timestamp", 1))
+        if not docs:
+            return pd.DataFrame()
+        rows = []
+        for d in docs:
+            p = d.get("payload", {}) or {}
+            main = p.get("main", {}) or {}
+            wind = p.get("wind", {}) or {}
+            rain = 0.0
+            if isinstance(p.get("rain"), dict):
+                rain = p["rain"].get("1h", 0.0) or 0.0
+            rows.append({
+                "location_id": d.get("location_id"),
+                "timestamp": d.get("timestamp"),
+                "temp_c": main.get("temp"),
+                "pressure_hpa": main.get("pressure"),
+                "humidity_pct": main.get("humidity"),
+                "wind_m_s": wind.get("speed"),
+                "rain_1h_mm": rain
+            })
+        df = pd.DataFrame(rows)
+        if df.empty:
+            return df
+        df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+        return df
 
 def upsert_features(df_feat):
-    """
-    Upsert features into Mongo features collection.
-    Uses (location_id, timestamp) as unique key.
-    """
     ops = []
     for _, r in df_feat.iterrows():
         doc = {
@@ -83,20 +105,35 @@ def upsert_features(df_feat):
         features_col.bulk_write(ops)
 
 def run_feature_worker(days=7, limit=None):
-    df = load_recent_clean(days=days, limit=limit)
-    if df.empty:
-        print("No data")
-        return df
-    # ensure timestamp is datetime64 with tz
-    df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
-    feat_df = compute_features_from_df(df)
-    # optional: drop rows with NaNs in essential features
-    feat_df = feat_df.dropna(subset=["temp_c","pressure_hpa","humidity_pct"], how="any")
-    # write to mongo
-    upsert_features(feat_df)
-    print("Wrote", len(feat_df), "feature rows")
-    return feat_df
+    try:
+        df = load_recent_clean(days=days, limit=limit)
+        if df.empty:
+            print("No data")
+            return df
+        # ensure timestamp is datetime64 with tz
+        df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+        feat_df = compute_features_from_df(df)
+        feat_df = feat_df.dropna(subset=["temp_c","pressure_hpa","humidity_pct"], how="any")
+        upsert_features(feat_df)
+        print("Wrote", len(feat_df), "feature rows")
+        return feat_df
+    except Exception as e:
+        print("Feature worker failed:", e)
+        traceback.print_exc()
+        return pd.DataFrame()
 
 if __name__ == "__main__":
-    df_out = run_feature_worker(days=7, limit=None)
-    print(df_out.head())
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--days", type=int, default=7)
+    parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--once", action="store_true", help="Run once and exit")
+    args = parser.parse_args()
+
+    if args.once:
+        run_feature_worker(days=args.days, limit=args.limit)
+    else:
+        # original behavior - loop every 5 minutes
+        while True:
+            run_feature_worker(days=args.days, limit=args.limit)
+            time.sleep(300)
