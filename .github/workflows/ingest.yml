@@ -19,4 +19,5 @@ jobs:
         env:
           MONGO_URI: ${{ secrets.MONGO_URI }}
           OWM_API_KEY: ${{ secrets.OWM_API_KEY }}
-        run: python backend/ingest.py
+        run: python backend/ingest.py --once
+
