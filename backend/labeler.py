@@ -1,18 +1,21 @@
 # labeler.py
 import os
-from datetime import timedelta
+from datetime import timedelta, datetime, timezone
 from pymongo import MongoClient, UpdateOne
-from datetime import datetime, timezone
+import traceback
+import argparse
 
-MONGO_URI = os.environ["MONGO_URI"]
-DB_NAME = "weather"
+MONGO_URI = os.environ.get("MONGO_URI")
+DB_NAME = os.environ.get("DB_NAME", "weather")
 FEATURES_COL = "features"
 RAW_COL = "raw_observations"
 PRED_COL = os.getenv("PRED_COL", "predictions")
 
-# how far back to search (days) for unlabeled features
 DEFAULT_DAYS = 14
 BATCH_SIZE = 500
+
+if not MONGO_URI:
+    raise RuntimeError("MONGO_URI not set in env")
 
 client = MongoClient(MONGO_URI)
 db = client[DB_NAME]
@@ -21,18 +24,14 @@ raw_col = db[RAW_COL]
 pred_col = db[PRED_COL]
 
 def extract_rain_from_payload(payload):
-    """Robustly extract 1h rain amount from OWM-like payloads."""
     if not payload or not isinstance(payload, dict):
         return 0.0
-    # try payload.rain (could be dict or number)
     rain = payload.get("rain")
     if isinstance(rain, (int, float)):
         return float(rain)
     if isinstance(rain, dict):
-        # common key: "1h"
         val = rain.get("1h")
         if val is None:
-            # sometimes total or other keys
             for v in rain.values():
                 try:
                     return float(v)
@@ -42,19 +41,13 @@ def extract_rain_from_payload(payload):
             return float(val) if val is not None else 0.0
         except Exception:
             return 0.0
-    # fallback: sometimes precipitation in other fields
     return 0.0
 
 def compute_label_for_feature(doc):
-    """
-    doc: feature document with keys 'location_id' and 'timestamp' (datetime)
-    returns: 1, 0, or None (if insufficient future data)
-    """
     loc = doc.get("location_id")
     ts = doc.get("timestamp")
     if loc is None or ts is None:
         return None
-    # ensure tz-aware datetime
     if ts.tzinfo is None:
         ts = ts.replace(tzinfo=timezone.utc)
     end = ts + timedelta(hours=1)
@@ -64,8 +57,6 @@ def compute_label_for_feature(doc):
         found_any = True
         payload = r.get("payload") or {}
         rain_amt = extract_rain_from_payload(payload)
-        if rain_amt is None:
-            continue
         try:
             if float(rain_amt) > 0.0:
                 return 1
@@ -75,26 +66,7 @@ def compute_label_for_feature(doc):
         return None
     return 0
 
-def main(days=DEFAULT_DAYS, batch_size=BATCH_SIZE, update_predictions=True):
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-    q = {
-        "timestamp": {"$gte": cutoff},
-        "$or": [
-            {"label_next_hour": {"$exists": False}},
-            {"label_next_hour": None}
-        ]
-    }
-    cursor = features_col.find(q).sort("timestamp", 1).limit(10000)
-    to_process = []
-    for doc in cursor:
-        to_process.append(doc)
-        if len(to_process) >= batch_size:
-            _process_batch(to_process, update_predictions)
-            to_process = []
-    if to_process:
-        _process_batch(to_process, update_predictions)
-
-def _process_batch(docs, update_predictions):
+def process_batch(docs, update_predictions):
     ops_features = []
     ops_preds = []
     labeled = 0
@@ -107,7 +79,6 @@ def _process_batch(docs, update_predictions):
         labeled += 1
         ts = d["timestamp"]
         loc = d["location_id"]
-        # upsert into features collection
         ops_features.append(
             UpdateOne(
                 {"_id": d["_id"]},
@@ -115,7 +86,6 @@ def _process_batch(docs, update_predictions):
             )
         )
         if update_predictions:
-            # update matching prediction if exists (match on loc + timestamp)
             ops_preds.append(
                 UpdateOne(
                     {"location_id": loc, "timestamp": ts},
@@ -127,12 +97,41 @@ def _process_batch(docs, update_predictions):
     if ops_preds:
         pred_col.bulk_write(ops_preds)
     print(f"Batch processed: labeled={labeled}, skipped={skipped}, attempted={len(docs)}")
+    return labeled, skipped
+
+def run_labeler(days=DEFAULT_DAYS, batch_size=BATCH_SIZE, update_predictions=True):
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    q = {
+        "timestamp": {"$gte": cutoff},
+        "$or": [
+            {"label_next_hour": {"$exists": False}},
+            {"label_next_hour": None}
+        ]
+    }
+    cursor = features_col.find(q).sort("timestamp", 1).limit(10000)
+    to_process = []
+    total_labeled = 0
+    total_skipped = 0
+    for doc in cursor:
+        to_process.append(doc)
+        if len(to_process) >= batch_size:
+            labeled, skipped = process_batch(to_process, update_predictions)
+            total_labeled += labeled
+            total_skipped += skipped
+            to_process = []
+    if to_process:
+        labeled, skipped = process_batch(to_process, update_predictions)
+        total_labeled += labeled
+        total_skipped += skipped
+    print(f"Labeler complete: total_labeled={total_labeled}, total_skipped={total_skipped}")
 
 if __name__ == "__main__":
-    import argparse
-    p = argparse.ArgumentParser()
-    p.add_argument("--days", type=int, default=DEFAULT_DAYS)
-    p.add_argument("--batch-size", type=int, default=BATCH_SIZE)
-    p.add_argument("--no-update-predictions", action="store_true", help="Do not update predictions collection")
-    args = p.parse_args()
-    main(days=args.days, batch_size=args.batch_size, update_predictions=not args.no_update_predictions)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--days", type=int, default=DEFAULT_DAYS)
+    parser.add_argument("--batch-size", type=int, default=BATCH_SIZE)
+    parser.add_argument("--no-update-predictions", action="store_true")
+    parser.add_argument("--once", action="store_true", help="Run once and exit (default)")
+    args = parser.parse_args()
+
+    # labeler is naturally a one-shot job; if you want periodic runs, trigger via scheduler
+    run_labeler(days=args.days, batch_size=args.batch_size, update_predictions=not args.no_update_predictions)
