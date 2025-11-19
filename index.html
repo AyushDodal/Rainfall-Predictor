@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Rainfall — Live Dashboard (Singapore)</title>
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <!-- Custom styles -->
+  <link rel="stylesheet" href="styles.css" />
+
+</head>
+<body>
+  <div id="bg-sky" aria-hidden></div>
+
+  <div class="container">
+    <header class="header">
+      <div>
+        <h1>Rainfall — Live Dashboard (Singapore)</h1>
+        <p class="subtitle">Real-time rainfall probabilities — OpenWeatherMap → XGBoost pipeline</p>
+      </div>
+      <div class="meta">
+        <div id="model-version">Model: —</div>
+        <div id="last-updated">Last updated: —</div>
+      </div>
+    </header>
+
+    <main class="grid">
+      <!-- Map -->
+      <section class="card map-card">
+        <h2>Singapore Map</h2>
+        <div id="map" class="map"></div>
+        <div class="hint">Click markers to view details. Raindrop = predicted rain.</div>
+      </section>
+
+      <!-- Right panel: stats & model -->
+      <aside class="card side-card">
+        <h3>Live Stats</h3>
+        <div class="stats-grid">
+          <div class="stat">
+            <div class="stat-value" id="stat-ingested">—</div>
+            <div class="stat-label">Total ingested</div>
+          </div>
+          <div class="stat">
+            <div class="stat-value" id="stat-trained">—</div>
+            <div class="stat-label">Training samples</div>
+          </div>
+          <div class="stat">
+            <div class="stat-value" id="stat-auc">—</div>
+            <div class="stat-label">AUC (test)</div>
+          </div>
+          <div class="stat">
+            <div class="stat-value" id="stat-prec">—</div>
+            <div class="stat-label">Precision</div>
+          </div>
+          <div class="stat">
+            <div class="stat-value" id="stat-rec">—</div>
+            <div class="stat-label">Recall</div>
+          </div>
+        </div>
+
+        <hr />
+
+        <h3>About this project</h3>
+        <p class="small">
+          This demo ingests OpenWeatherMap observations for Singapore, computes features and labels,
+          trains an XGBoost classifier with time-split evaluation, and serves predictions via a FastAPI endpoint.
+        </p>
+
+        <h4>Pipeline</h4>
+        <ol class="small">
+          <li>ingest.py — raw data → Mongo</li>
+          <li>feature_worker.py — features → Mongo</li>
+          <li>labeler.py — delayed labeling (1 hour)</li>
+          <li>train.py — time-split training, save to GridFS</li>
+          <li>serve.py — FastAPI model server</li>
+        </ol>
+      </aside>
+
+      <!-- Live chart -->
+      <section class="card chart-card">
+        <h3>Model — live average probability (last N points)</h3>
+        <canvas id="liveChart"></canvas>
+        <div class="chart-legend">
+          <button id="refreshBtn">Refresh now</button>
+          <span class="muted">Updates every 30s</span>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      Built by Ayush — replace skyline image with your own. Data shown is live from your backend.
+    </footer>
+  </div>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <!-- App -->
+  <script src="app.js"></script>
+</body>
+</html>
