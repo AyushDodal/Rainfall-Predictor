@@ -2,8 +2,9 @@
 from pymongo import MongoClient, UpdateOne
 import pandas as pd
 from datetime import timedelta, timezone, datetime
+import os
 
-MONGO_URI = "mongodb://localhost:27017"
+MONGO_URI = os.environ["MONGO_URI"]
 DB = "weather"
 RAW_COL = "raw_observations"
 FEATURES_COL = "features"
