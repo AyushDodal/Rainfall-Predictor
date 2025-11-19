@@ -1,47 +1,21 @@
-#!/usr/bin/env python
-# coding: utf-8
-
-# In[1]:
-
-
+# ingest.py
 import os
 from dotenv import load_dotenv
 import requests
 import time
 import pymongo
 from datetime import datetime, timezone
+import argparse
 
 load_dotenv()
 
+OWM_KEY = os.environ.get("OWM_API_KEY")
+if not OWM_KEY:
+    raise RuntimeError("OWM_API_KEY not set in env")
 
-# In[2]:
-
-
-OWM_KEY = os.environ["OWM_API_KEY"]
-
-
-# In[30]:
-
-
-#def fetch_weather(lat, lon):
-#    url = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={OWM_KEY}&units=metric"
-#    r = requests.get(url)
-#    return r.json()
-
-
-#fetch_weather(19, 73)
-
-
-# In[ ]:
-
-
-
-
-
-# In[3]:
-
-
-MONGO_URI = os.environ["MONGO_URI"]
+MONGO_URI = os.environ.get("MONGO_URI")
+if not MONGO_URI:
+    raise RuntimeError("MONGO_URI not set in env")
 
 client = pymongo.MongoClient(MONGO_URI)
 db = client.weather
@@ -57,49 +31,51 @@ LOCATIONS = [
         (1.360000, 103.870000), (1.300000, 103.820000), (1.320000, 103.840000),
         (1.350000, 103.860000), (1.370000, 103.830000), (1.390000, 103.780000),
         (1.400000, 103.900000), (1.410000, 103.810000), (1.420000, 103.830000),
-        #(1.430000, 103.850000), (1.440000, 103.870000), (1.450000, 103.890000),
-        #(1.460000, 103.910000), (1.470000, 103.930000), (1.280000, 103.830000),
-        #(1.285000, 103.805000), (1.290000, 103.780000), (1.295000, 103.755000),
-        #(1.300000, 103.730000), (1.305000, 103.705000), (1.310000, 103.680000),
-        #(1.315000, 103.655000), (1.320000, 103.630000), (1.325000, 103.605000),
-        #(1.330000, 103.580000), (1.335000, 103.555000), (1.340000, 103.530000),
-        #(1.345000, 103.505000), (1.350000, 103.480000), (1.355000, 103.455000),
-        #(1.360000, 103.430000), (1.365000, 103.405000), (1.370000, 103.380000),
-        #(1.375000, 103.355000), (1.380000, 103.330000), (1.385000, 103.305000),
-        #(1.390000, 103.280000), (1.395000, 103.255000), (1.400000, 103.230000),
-        #(1.405000, 103.205000), (1.410000, 103.180000), (1.415000, 103.155000),
-        #(1.420000, 103.130000), (1.425000, 103.105000), (1.430000, 103.080000),
-        #(1.435000, 103.055000), (1.440000, 103.030000), (1.445000, 103.005000),
-        #(1.450000, 102.980000), (1.455000, 102.955000),
     ])
 ]
 
 def fetch_weather(lat, lon):
     url = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={OWM_KEY}&units=metric"
-    r = requests.get(url, timeout=10)
+    r = requests.get(url, timeout=15)
     r.raise_for_status()
     return r.json()
 
-def main():
+def run_once():
+    start = time.time()
+    success = 0
+    failed = 0
+    for loc in LOCATIONS:
+        try:
+            data = fetch_weather(loc["lat"], loc["lon"])
+            doc = {
+                "location_id": loc["id"],
+                "lat": loc["lat"],
+                "lon": loc["lon"],
+                "timestamp": datetime.now(timezone.utc),
+                "payload": data,
+            }
+            raw.insert_one(doc)
+            success += 1
+            print(f"[{loc['id']}] OK at {doc['timestamp']}")
+        except Exception as e:
+            failed += 1
+            print(f"[{loc['id']}] ERROR: {e}")
+    elapsed = time.time() - start
+    print(f"run_once complete: success={success}, failed={failed}, elapsed={elapsed:.2f}s")
+    # return summary for callers
+    return {"success": success, "failed": failed, "elapsed": elapsed}
+
+def main_loop():
     while True:
-        start = time.time()
-        for loc in LOCATIONS:
-            try:
-                data = fetch_weather(loc["lat"], loc["lon"])
-                doc = {
-                    "location_id": loc["id"],
-                    "lat": loc["lat"],
-                    "lon": loc["lon"],
-                    "timestamp": datetime.now(timezone.utc),
-                    "payload": data,
-                }
-                raw.insert_one(doc)
-                print(f"[{loc['id']}] OK at {doc['timestamp']}")
-            except Exception as e:
-                print(f"[{loc['id']}] ERROR: {e}")
+        run_once()
         # keep 60s spacing between batches
-        time.sleep(max(0, 60 - (time.time() - start)))
+        time.sleep(60)
 
 if __name__ == "__main__":
-    main()
-
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--once", action="store_true", help="Run one iteration and exit")
+    args = parser.parse_args()
+    if args.once:
+        run_once()
+    else:
+        main_loop()
