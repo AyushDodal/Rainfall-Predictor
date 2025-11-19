@@ -17,7 +17,7 @@ load_dotenv()
 # In[2]:
 
 
-OWM_KEY = os.environ["OpenWeatherMaps_Api_Key"]
+OWM_KEY = os.environ["OWM_API_KEY"]
 
 
 # In[30]:
@@ -41,7 +41,7 @@ OWM_KEY = os.environ["OpenWeatherMaps_Api_Key"]
 # In[3]:
 
 
-MONGO_URI = "mongodb://localhost:27017"
+MONGO_URI = os.environ["MONGO_URI"]
 
 client = pymongo.MongoClient(MONGO_URI)
 db = client.weather
