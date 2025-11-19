@@ -84,7 +84,8 @@ def get_clean_df(days=7, limit=None, mongo_uri=MONGO_URI, db_name=DB_NAME, col=C
 
 
 
-# Example usage:
-#from mongo_to_df import get_clean_df
-df = get_clean_df(days=7, limit=None)
-df.head()
+if __name__ == "__main__":
+    # run a quick smoke test when executed directly, but NOT on import
+    df = get_clean_df(days=7, limit=None)
+    print("Loaded clean df shape:", df.shape)
+
