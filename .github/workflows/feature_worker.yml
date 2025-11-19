@@ -1,0 +1,18 @@
+name: Feature worker (scheduled)
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  features:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with: { python-version: '3.11' }
+      - run: pip install -r backend/requirements.txt
+      - name: Run feature worker once
+        env:
+          MONGO_URI: ${{ secrets.MONGO_URI }}
+        run: python backend/feature_worker.py
