@@ -15,4 +15,4 @@ jobs:
       - name: Run training
         env:
           MONGO_URI: ${{ secrets.MONGO_URI }}
-        run: python backend/train.py --activate True
+        run: python backend/train.py --activate
