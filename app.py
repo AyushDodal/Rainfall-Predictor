@@ -1,4 +1,3 @@
-# streamlit_app.py
 import os
 import time
 import requests
@@ -7,7 +6,7 @@ import streamlit as st
 from datetime import datetime, timezone
 import plotly.express as px
 import folium
-from streamlit_folium import st_folium
+from streamlit.components.v1 import html as st_html
 
 # -------------------------
 # CONFIG
@@ -18,8 +17,7 @@ st.set_page_config(
     initial_sidebar_state="auto",
 )
 
-# Backend endpoint (your deployed model serve). Set this in Streamlit secrets or env.
-# Example: https://rainfall-predictor-h3sx.onrender.com
+# Backend endpoint (set as Streamlit secret or env)
 BACKEND_URL = st.secrets.get("BACKEND_URL", os.getenv("BACKEND_URL", "http://localhost:8000"))
 
 # How many recent points to show in chart
@@ -27,17 +25,16 @@ CHART_POINTS = 50
 
 # Map center Singapore
 SG_CENTER = (1.3521, 103.8198)
-MAP_ZOOM = 15
+MAP_ZOOM = 12
 
 # -------------------------
 # Helpers
 # -------------------------
 @st.cache_data(ttl=15)
-@st.cache_data(ttl=15)
-def fetch_recent_predictions(n=500):
+def fetch_recent_predictions(n=500, _force: int | None = None):
     """
-    Try to fetch recent predictions from the backend API.
-    Endpoint expected: GET {BACKEND_URL}/predictions/recent?n=500
+    Fetch recent predictions from backend.
+    _force is only used to change cache key when user presses Refresh.
     """
     url = f"{BACKEND_URL}/predictions/recent?n={n}"
     try:
@@ -45,14 +42,12 @@ def fetch_recent_predictions(n=500):
         r.raise_for_status()
         data = r.json()
         df = pd.DataFrame(data)
-        # ensure correct dtypes
-        if "timestamp" in df.columns:
+        if "timestamp" in df.columns and not df["timestamp"].empty:
             df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
         return df
     except Exception as e:
-        # <<---- use print() here, not st.debug()
-        print(f"fetch_recent_predictions failed: {e}")
-        return pd.DataFrame()  # caller will handle fallback
+        print(f"[fetch_recent_predictions] failed: {e}")
+        return pd.DataFrame()
 
 
 def sample_data():
@@ -61,28 +56,68 @@ def sample_data():
     rows = []
     coords = [
         ("sg-01", 1.29027, 103.851959),
-        ("sg-02", 1.352083,103.819836),
-        ("sg-03", 1.280095,103.850949),
-        ("sg-04", 1.300000,103.800000),
-        ("sg-05", 1.320000,103.830000)
+        ("sg-02", 1.352083, 103.819836),
+        ("sg-03", 1.280095, 103.850949),
+        ("sg-04", 1.300000, 103.800000),
+        ("sg-05", 1.320000, 103.830000),
     ]
-    for i,(lid,lat,lon) in enumerate(coords):
+    for i, (lid, lat, lon) in enumerate(coords):
         rows.append({
             "location_id": lid,
             "lat": lat,
             "lon": lon,
             "timestamp": now - pd.Timedelta(minutes=i),
-            "probability": float(max(0, min(1, 0.2 + i*0.15))),
-            "predicted_label": int(i%2==0),
+            "probability": float(max(0, min(1, 0.2 + i * 0.15))),
+            "predicted_label": int(i % 2 == 0),
             "model_version": "vLOCAL"
         })
     return pd.DataFrame(rows)
 
+
+# Produce a tiny stable tuple of records used to build the map cache key
+def records_from_df(df: pd.DataFrame):
+    if df.empty:
+        return tuple()
+    latest = df.sort_values("timestamp").groupby("location_id", as_index=False).last()
+    recs = []
+    for _, r in latest.iterrows():
+        recs.append((
+            str(r["location_id"]),
+            float(r["lat"]),
+            float(r["lon"]),
+            float(r.get("probability", 0.0)),
+            int(r.get("predicted_label", 0))
+        ))
+    return tuple(recs)
+
+
+@st.cache_data(ttl=30)
+def make_map_html(records, center=SG_CENTER, zoom=MAP_ZOOM):
+    """
+    Build folium map and return HTML. Cached to avoid reinitialisation blink.
+    records: tuple of (location_id, lat, lon, prob, label)
+    """
+    m = folium.Map(location=center, zoom_start=zoom, control_scale=True)
+    # add tiles for nicer look (optional). Comment/update if external tile access blocked.
+    folium.TileLayer("OpenStreetMap").add_to(m)
+
+    for lid, lat, lon, prob, lbl in records:
+        icon_html = "💧" if (lbl == 1 or prob >= 0.5) else "⚪"
+        popup_html = f"<b>{lid}</b><br/>Prob: {prob:.2f}<br/>Predicted: {lbl}"
+        folium.Marker(
+            location=(lat, lon),
+            popup=folium.Popup(popup_html, max_width=300),
+            icon=folium.DivIcon(html=f"<div style='font-size:22px'>{icon_html}</div>")
+        ).add_to(m)
+
+    # Return stable HTML representation
+    return m._repr_html_()
+
+
 # -------------------------
 # UI - Background & header
 # -------------------------
-# Use CSS to set a subtle backdrop image on the page (Streamlit allows limited HTML/CSS)
-BG_IMAGE = st.secrets.get("BG_IMAGE_URL", os.getenv("BG_IMAGE_URL", ""))  # optional public URL you upload to repo or host
+BG_IMAGE = st.secrets.get("BG_IMAGE_URL", os.getenv("BG_IMAGE_URL", ""))
 if BG_IMAGE:
     page_bg_css = f"""
     <style>
@@ -93,14 +128,15 @@ if BG_IMAGE:
       background-position: center;
       background-repeat: no-repeat;
     }}
-    .stSidebar .css-1d391kg {{}}
     </style>
     """
     st.markdown(page_bg_css, unsafe_allow_html=True)
 
-st.markdown("<div style='padding:18px 0px 6px 0px'><h1 style='margin:0px'>Rainfall — Live Dashboard (Singapore)</h1>"
-            "<div style='color: #6c757d;'>Real-time rainfall probabilities — OpenWeatherMap → XGBoost pipeline</div></div>",
-            unsafe_allow_html=True)
+st.markdown(
+    "<div style='padding:18px 0px 6px 0px'><h1 style='margin:0px'>Rainfall — Live Dashboard (Singapore)</h1>"
+    "<div style='color: #6c757d;'>Real-time rainfall probabilities — OpenWeatherMap → XGBoost pipeline</div></div>",
+    unsafe_allow_html=True
+)
 
 # -------------------------
 # Layout: two columns (map | right sidebar)
@@ -116,22 +152,27 @@ with st.sidebar:
     model_version_text = st.empty()
     st.markdown("---")
     st.caption("Controls")
-    REFRESH = st.button("Refresh now")
+    REFRESH = st.button("Refresh now (force)")
 
 # -------------------------
-# Fetch Data
+# Fetch Data (use _force to bypass cache on button press)
 # -------------------------
-df = fetch_recent_predictions(n=1000)
+_force = int(time.time()) if REFRESH else None
+df = fetch_recent_predictions(n=1000, _force=_force)
 if df.empty:
     df = sample_data()
     st.warning("Using local sample data (backend not reachable). Set BACKEND_URL and redeploy.")
 else:
     st.success(f"Fetched {len(df):,} recent predictions")
 
-# set update info
+# Update last update & model info
 if not df.empty and "timestamp" in df.columns:
     latest_ts = df["timestamp"].max()
-    last_update_text.write(f"Last updated: {latest_ts.strftime('%Y-%m-%d %H:%M:%S %Z') if latest_ts.tzinfo else latest_ts}")
+    # ensure tz-aware string if possible
+    try:
+        last_update_text.write(f"Last updated: {latest_ts.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+    except Exception:
+        last_update_text.write(f"Last updated: {latest_ts}")
 else:
     last_update_text.write("Last updated: -")
 
@@ -146,9 +187,7 @@ else:
 with right_col:
     st.header("Quick overview")
     total_ingested = df.shape[0]
-    training_samples = st.empty()  # placeholder; you can fetch from backend
-    # compute some metrics
-    if "probability" in df.columns:
+    if "probability" in df.columns and "predicted_label" in df.columns:
         avg_prob = df["probability"].mean()
         pct_rain = 100.0 * (df["predicted_label"].sum() / max(1, len(df)))
     else:
@@ -163,52 +202,19 @@ with right_col:
     st.subheader("Model & Info")
     st.write("Model details, notes, and metrics can be fetched from the model server.")
     if st.button("Reload model info"):
+        # small mechanism to force full rerun
         st.experimental_rerun()
 
 # -------------------------
-# Map: folium with markers
+# Map: folium with markers (cached HTML => no blinking)
 # -------------------------
 with map_col:
     st.subheader("Map (click marker for details)")
 
-    # create base folium map
-    m = folium.Map(location=SG_CENTER, zoom_start=MAP_ZOOM, control_scale=True)
-
-    # cluster markers by location_id (keep last record per location)
-    if not df.empty:
-        # if there are multiple timestamps per location, keep latest
-        latest_per_loc = df.sort_values("timestamp").groupby("location_id", as_index=False).last()
-        for _, r in latest_per_loc.iterrows():
-            lat = float(r["lat"])
-            lon = float(r["lon"])
-            lid = r.get("location_id", "loc")
-            prob = float(r.get("probability", 0.0))
-            lbl = int(r.get("predicted_label", 0))
-            ts = r.get("timestamp")
-            ts_text = ts.strftime("%Y-%m-%d %H:%M:%S UTC") if hasattr(ts, "tzinfo") else str(ts)
-
-            # marker icon - raindrop if predicted rain, dot otherwise
-            if lbl == 1 or prob >= 0.5:
-                icon_html = "💧"
-            else:
-                icon_html = "⚪"
-
-            popup_html = f"""
-            <b>{lid}</b><br/>
-            Prob (next hour): <b>{prob:.2f}</b><br/>
-            Predicted rain: <b>{lbl}</b><br/>
-            Timestamp: {ts_text}<br/>
-            """
-
-            folium.Marker(
-                location=(lat, lon),
-                tooltip=f"{lid} — {prob:.2f}",
-                popup=folium.Popup(popup_html, max_width=300),
-                icon=folium.DivIcon(html=f"<div style='font-size:20px'>{icon_html}</div>")
-            ).add_to(m)
-
-    # show map in Streamlit
-    st_data = st_folium(m, width="100%", height=600)
+    records = records_from_df(df)
+    map_html = make_map_html(records, center=SG_CENTER, zoom=MAP_ZOOM)
+    # render cached HTML (no blinking)
+    st_html(map_html, height=600, scrolling=False)
 
 # -------------------------
 # Live Chart: rolling average of probability
@@ -216,15 +222,13 @@ with map_col:
 with st.container():
     st.subheader("Model — live average probability (recent points)")
     if not df.empty and "probability" in df.columns:
-        # aggregate by timestamp (minute bucket)
         df_sorted = df.sort_values("timestamp")
-        # pick last CHART_POINTS unique times (or rolling)
         df_grouped = df_sorted.groupby("timestamp").agg({"probability": "mean"}).reset_index()
         df_grouped = df_grouped.tail(CHART_POINTS)
         if not df_grouped.empty:
             fig = px.line(df_grouped, x="timestamp", y="probability",
                           labels={"timestamp": "Time", "probability": "Avg probability"},
-                          range_y=[0,1],
+                          range_y=[0, 1],
                           height=300)
             st.plotly_chart(fig, use_container_width=True)
         else:
@@ -244,6 +248,5 @@ with st.expander("About this project"):
         """
     )
 
-# auto-refresh (if user wants)
-#if REFRESH:
-#    st.experimental_rerun()
+# Note: we intentionally do not auto-refresh continuously to avoid blinking.
+# Use the "Refresh now (force)" button to force an immediate refresh (it passes a changing _force to the cached fetch).
