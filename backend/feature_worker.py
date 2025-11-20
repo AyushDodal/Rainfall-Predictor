@@ -1,9 +1,10 @@
-# feature_worker.py
+# feature_worker.py (fixed)
 import os
 from pymongo import MongoClient, UpdateOne
 import pandas as pd
-from datetime import timedelta, timezone, datetime
+from datetime import timedelta
 import traceback
+import time
 
 # Read MONGO_URI from env
 MONGO_URI = os.environ.get("MONGO_URI")
@@ -51,42 +52,39 @@ def compute_features_from_df(df):
     return out
 
 def load_recent_clean(days=7, limit=None):
-    # try to import existing helper
-    try:
-        from mongo_to_df import get_clean_df
-        return get_clean_df(days=days, limit=limit)
-    except Exception:
-        # fallback: read raw_observations and construct a minimal clean df
-        print("Warning: get_clean_df not available, building minimal clean DataFrame from raw_observations")
-        q = {}
-        if days:
-            cutoff = pd.Timestamp.utcnow(tz="UTC") - pd.Timedelta(days=days)
-            q["timestamp"] = {"$gte": cutoff.to_pydatetime()}
-        docs = list(raw.find(q).sort("timestamp", 1))
-        if not docs:
-            return pd.DataFrame()
-        rows = []
-        for d in docs:
-            p = d.get("payload", {}) or {}
-            main = p.get("main", {}) or {}
-            wind = p.get("wind", {}) or {}
-            rain = 0.0
-            if isinstance(p.get("rain"), dict):
-                rain = p["rain"].get("1h", 0.0) or 0.0
-            rows.append({
-                "location_id": d.get("location_id"),
-                "timestamp": d.get("timestamp"),
-                "temp_c": main.get("temp"),
-                "pressure_hpa": main.get("pressure"),
-                "humidity_pct": main.get("humidity"),
-                "wind_m_s": wind.get("speed"),
-                "rain_1h_mm": rain
-            })
-        df = pd.DataFrame(rows)
-        if df.empty:
-            return df
-        df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+    """
+    Build a minimal clean DataFrame directly from the `raw` collection (uses MONGO_URI-bound client).
+    Avoids importing other modules that may default to localhost.
+    """
+    q = {}
+    if days:
+        cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=days)
+        q["timestamp"] = {"$gte": cutoff.to_pydatetime()}
+    docs = list(raw.find(q).sort("timestamp", 1).limit(limit or 100000))
+    if not docs:
+        return pd.DataFrame()
+    rows = []
+    for d in docs:
+        p = d.get("payload", {}) or {}
+        main = p.get("main", {}) or {}
+        wind = p.get("wind", {}) or {}
+        rain = 0.0
+        if isinstance(p.get("rain"), dict):
+            rain = p["rain"].get("1h", 0.0) or 0.0
+        rows.append({
+            "location_id": d.get("location_id"),
+            "timestamp": d.get("timestamp"),
+            "temp_c": main.get("temp"),
+            "pressure_hpa": main.get("pressure"),
+            "humidity_pct": main.get("humidity"),
+            "wind_m_s": wind.get("speed"),
+            "rain_1h_mm": rain
+        })
+    df = pd.DataFrame(rows)
+    if df.empty:
         return df
+    df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+    return df
 
 def upsert_features(df_feat):
     ops = []
@@ -133,7 +131,6 @@ if __name__ == "__main__":
     if args.once:
         run_feature_worker(days=args.days, limit=args.limit)
     else:
-        # original behavior - loop every 5 minutes
         while True:
             run_feature_worker(days=args.days, limit=args.limit)
             time.sleep(300)
