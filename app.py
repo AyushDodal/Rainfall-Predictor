@@ -27,7 +27,7 @@ CHART_POINTS = 50
 
 # Map center Singapore
 SG_CENTER = (1.3521, 103.8198)
-MAP_ZOOM = 11
+MAP_ZOOM = 15
 
 # -------------------------
 # Helpers
@@ -245,5 +245,5 @@ with st.expander("About this project"):
     )
 
 # auto-refresh (if user wants)
-if REFRESH:
-    st.experimental_rerun()
+#if REFRESH:
+#    st.experimental_rerun()
