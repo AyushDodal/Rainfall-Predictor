@@ -1,0 +1,40 @@
+name: Ingest (hourly, internal 60-min loop)
+
+on:
+  schedule:
+    - cron: '0 * * * *'     # at minute 0 of every hour
+  workflow_dispatch:
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ingest-hourly
+      cancel-in-progress: true
+    timeout-minutes: 120   # allow up to 2 hours (adjust as needed)
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: Run internal 60-minute loop
+        env:
+          MONGO_URI: ${{ secrets.MONGO_URI }}
+          OWM_API_KEY: ${{ secrets.OWM_API_KEY }}
+        run: |
+          set -e
+          for i in $(seq 1 60); do
+            echo "[$(date -u)] iteration $i/60"
+            python backend/ingest.py --once || echo "ingest iteration failed (continue)"
+            # small sleep guard to keep near-60s spacing
+            sleep 60
+          done
