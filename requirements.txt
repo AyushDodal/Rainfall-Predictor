@@ -1,3 +1,10 @@
 streamlit
 pandas
 requests
+streamlit>=1.20
+requests
+pandas
+plotly
+folium
+streamlit-folium
+python-dotenv
