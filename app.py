@@ -33,12 +33,11 @@ MAP_ZOOM = 11
 # Helpers
 # -------------------------
 @st.cache_data(ttl=15)
+@st.cache_data(ttl=15)
 def fetch_recent_predictions(n=500):
     """
     Try to fetch recent predictions from the backend API.
-    Expecting endpoint: GET {BACKEND_URL}/predictions/recent?n=500
-    The endpoint should return JSON list of records, each having:
-      - location_id, lat, lon, timestamp, probability (0..1), predicted_label (0/1), model_version
+    Endpoint expected: GET {BACKEND_URL}/predictions/recent?n=500
     """
     url = f"{BACKEND_URL}/predictions/recent?n={n}"
     try:
@@ -51,8 +50,10 @@ def fetch_recent_predictions(n=500):
             df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
         return df
     except Exception as e:
-        st.debug(f"fetch_recent_predictions failed: {e}")
+        # <<---- use print() here, not st.debug()
+        print(f"fetch_recent_predictions failed: {e}")
         return pd.DataFrame()  # caller will handle fallback
+
 
 def sample_data():
     """Small sample DataFrame if backend not available (for local dev)."""
