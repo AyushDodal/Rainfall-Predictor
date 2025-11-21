@@ -18,7 +18,7 @@ st.set_page_config(
 )
 
 # Backend endpoint (set as Streamlit secret or env)
-BACKEND_URL = st.secrets.get("BACKEND_URL", os.getenv("BACKEND_URL", "http://localhost:8000"))
+BACKEND_URL = st.secrets.get("BACKEND_URL")# os.getenv("BACKEND_URL", "http://localhost:8000")
 
 # How many recent points to show in chart
 CHART_POINTS = 50
