@@ -202,8 +202,9 @@ with right_col:
     st.subheader("Model & Info")
     st.write("Model details, notes, and metrics can be fetched from the model server.")
     if st.button("Reload model info"):
-        # small mechanism to force full rerun
-        st.experimental_rerun()
+        st.cache_data.clear()  # clear cached fetches
+        st.rerun()
+
 
 # -------------------------
 # Map: folium with markers (cached HTML => no blinking)
