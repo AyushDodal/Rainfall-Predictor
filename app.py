@@ -30,38 +30,25 @@ MAP_ZOOM = 12
 # -------------------------
 # Helpers
 # -------------------------
-@st.cache_data(ttl=15)
-def fetch_recent_predictions(n=500):
+@st.cache_data(ttl=60)
+def fetch_recent_predictions(n: int = 500):
     """
-    Fetch recent predictions from backend API.
-    Backend returns: {"items": [...], "count": <int>}
-    We only care about the list in 'items'.
+    Fetch recent predictions from backend.
+    Endpoint: GET {BACKEND_URL}/predictions/recent?n=...
+    Returns a DataFrame.
     """
     url = f"{BACKEND_URL}/predictions/recent?n={n}"
     try:
         r = requests.get(url, timeout=6)
         r.raise_for_status()
-        payload = r.json()
-
-        # Pull out the list of docs
+        payload = r.json()          # {"items": [...], "count": ...}
         items = payload.get("items", [])
-        if not isinstance(items, list):
-            items = []
-
         df = pd.DataFrame(items)
 
-        # Normalise column names
-        if not df.empty:
-            if "pred_prob" in df.columns and "probability" not in df.columns:
-                df = df.rename(columns={"pred_prob": "probability"})
-            if "label" in df.columns and "predicted_label" not in df.columns:
-                df = df.rename(columns={"label": "predicted_label"})
-
-            if "timestamp" in df.columns:
-                df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+        if "timestamp" in df.columns:
+            df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
 
         return df
-
     except Exception as e:
         print(f"fetch_recent_predictions failed: {e}")
         return pd.DataFrame()
@@ -175,8 +162,14 @@ with st.sidebar:
 # -------------------------
 # Fetch Data (use _force to bypass cache on button press)
 # -------------------------
-_force = int(time.time()) if REFRESH else None
-df = fetch_recent_predictions(n=1000, _force=_force)
+#_force = int(time.time()) if REFRESH else None
+
+if REFRESH:
+    st.cache_data.clear()
+    st.rerun()
+
+
+df = fetch_recent_predictions(n=1000)
 if df.empty:
     df = sample_data()
     st.warning("Using local sample data (backend not reachable). Set BACKEND_URL and redeploy.")
