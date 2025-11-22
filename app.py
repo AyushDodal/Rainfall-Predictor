@@ -31,23 +31,41 @@ MAP_ZOOM = 12
 # Helpers
 # -------------------------
 @st.cache_data(ttl=15)
-def fetch_recent_predictions(n=500, _force: int | None = None):
+def fetch_recent_predictions(n=500):
     """
-    Fetch recent predictions from backend.
-    _force is only used to change cache key when user presses Refresh.
+    Fetch recent predictions from backend API.
+    Backend returns: {"items": [...], "count": <int>}
+    We only care about the list in 'items'.
     """
     url = f"{BACKEND_URL}/predictions/recent?n={n}"
     try:
         r = requests.get(url, timeout=6)
         r.raise_for_status()
-        data = r.json()
-        df = pd.DataFrame(data)
-        if "timestamp" in df.columns and not df["timestamp"].empty:
-            df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+        payload = r.json()
+
+        # Pull out the list of docs
+        items = payload.get("items", [])
+        if not isinstance(items, list):
+            items = []
+
+        df = pd.DataFrame(items)
+
+        # Normalise column names
+        if not df.empty:
+            if "pred_prob" in df.columns and "probability" not in df.columns:
+                df = df.rename(columns={"pred_prob": "probability"})
+            if "label" in df.columns and "predicted_label" not in df.columns:
+                df = df.rename(columns={"label": "predicted_label"})
+
+            if "timestamp" in df.columns:
+                df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+
         return df
+
     except Exception as e:
-        print(f"[fetch_recent_predictions] failed: {e}")
+        print(f"fetch_recent_predictions failed: {e}")
         return pd.DataFrame()
+
 
 
 def sample_data():
