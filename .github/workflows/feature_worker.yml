@@ -15,5 +15,5 @@ jobs:
       - name: Run feature worker once
         env:
           MONGO_URI: ${{ secrets.MONGO_URI }}
-        run: python backend/feature_worker.py --once
+        run: python backend/feature_worker.py --once --days 100 --limit None
 
