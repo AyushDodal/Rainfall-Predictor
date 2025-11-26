@@ -34,7 +34,7 @@ jobs:
           set -e
           for i in $(seq 1 60); do
             echo "[$(date -u)] iteration $i/60"
-            python backend/ingest.py --once || echo "ingest iteration failed (continue)"
+            #python backend/ingest.py --once || echo "ingest iteration failed (continue)"
             # small sleep guard to keep near-60s spacing
             sleep 60
           done
