@@ -2,7 +2,7 @@ name: Ingest (hourly, internal 60-min loop)
 
 on:
   schedule:
-    - cron: '0 * * * *'     # at minute 0 of every hour
+    #- cron: '0 * * * *'     # at minute 0 of every hour
   workflow_dispatch:
 
 jobs:
