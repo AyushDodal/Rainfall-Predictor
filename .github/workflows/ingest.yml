@@ -1,7 +1,7 @@
 name: Ingest (scheduled)
 on:
   schedule:
-    - cron: "* * * * *"   # every 1 minute
+#    - cron: "* * * * *"   # every 1 minute
   workflow_dispatch:        # allows manual run
 
 jobs:
